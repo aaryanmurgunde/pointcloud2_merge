@@ -1,7 +1,7 @@
 <launch>
-    <arg name="input_topics" default="[/points_alpha, /points_beta]" />
+    <arg name="input_topics" default="[/camera1/depth/color/points, /camera2/depth/color/points]" />
     <arg name="output_topic" default="/points_concat" />
-    <arg name="output_frame_id" default="velodyne" />
+    <arg name="output_frame_id" default="base_link" />
   
     <node pkg="pointcloud2_merge" type="pointcloud2_merge"
           name="pointcloud2_merge" output="screen">
