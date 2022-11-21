@@ -8,5 +8,6 @@
       <param name="output_frame_id" value="$(arg output_frame_id)" />
       <param name="input_topics" value="$(arg input_topics)" />
       <remap from="/points_concat" to="$(arg output_topic)" />
-    </node>
+    </node> 
+<!-- /Midpole/depth/color/points -->
   </launch>
