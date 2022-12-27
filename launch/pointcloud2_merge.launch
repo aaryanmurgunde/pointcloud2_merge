@@ -1,12 +1,14 @@
 <launch>
     <arg name="input_topics" default="[/Main/depth/color/points, /Portside/depth/color/points, /Starboard/depth/color/points, /Homing/depth/color/points]" />
     <arg name="output_topic" default="/Super_pointcloud" />
-    <arg name="output_frame_id" default="link_1_1" />
+    <arg name="output_frame_id" default="Homing_link" />
+    <arg name="resolution" default="0.02" />
   
     <node pkg="pointcloud2_merge" type="pointcloud2_merge"
           name="pointcloud2_merge" output="screen">
       <param name="output_frame_id" value="$(arg output_frame_id)" />
       <param name="input_topics" value="$(arg input_topics)" />
+      <param name="resolution" value="$(arg resolution)" />
       <remap from="/points_concat" to="$(arg output_topic)" />
     </node> 
 <!-- /Midpole/depth/color/points -->

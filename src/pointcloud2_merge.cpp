@@ -1,15 +1,23 @@
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
-#include <pcl/point_types.h>
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl_ros/point_cloud.h>
-#include <pcl_ros/transforms.h>
+
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/tf.h>
 #include <tf/transform_listener.h>
 #include <yaml-cpp/yaml.h>
+
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/PCLPointCloud2.h>
+
+#include <pcl_ros/point_cloud.h>
+#include <pcl_ros/transforms.h>
+
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/filters/voxel_grid.h>
+
 
 class Pointcloud2Merge
 {
@@ -17,7 +25,7 @@ public:
   Pointcloud2Merge();
 
 private:
-  typedef pcl::PointXYZI PointT;
+  typedef pcl::PointXYZ PointT;
   typedef pcl::PointCloud<PointT> PointCloudT;
   typedef sensor_msgs::PointCloud2 PointCloudMsgT;
   typedef message_filters::sync_policies::ApproximateTime<PointCloudMsgT, PointCloudMsgT, PointCloudMsgT,
@@ -35,6 +43,7 @@ private:
   size_t input_topics_size_;
   std::string input_topics_;
   std::string output_frame_id_;
+  double resolution_;
 
   void pointcloud_callback(const PointCloudMsgT::ConstPtr &msg1, const PointCloudMsgT::ConstPtr &msg2,
                            const PointCloudMsgT::ConstPtr &msg3, const PointCloudMsgT::ConstPtr &msg4,
@@ -46,6 +55,7 @@ Pointcloud2Merge::Pointcloud2Merge() : node_handle_(), private_node_handle_("~")
 {
   private_node_handle_.param("input_topics", input_topics_, std::string("[/points_alpha, /points_beta]"));
   private_node_handle_.param("output_frame_id", output_frame_id_, std::string("velodyne"));
+  private_node_handle_.param("resolution", resolution_, 0.025);
 
   YAML::Node topics = YAML::Load(input_topics_);
   input_topics_size_ = topics.size();
@@ -82,8 +92,9 @@ void Pointcloud2Merge::pointcloud_callback(const PointCloudMsgT::ConstPtr &msg1,
 {
   assert(2 <= input_topics_size_ && input_topics_size_ <= 8);
 
+  ros::WallTime start2 = ros::WallTime::now();
+
   PointCloudMsgT::ConstPtr msgs[8] = { msg1, msg2, msg3, msg4, msg5, msg6, msg7, msg8 };
-  PointCloudT::Ptr cloud_sources[8];
   PointCloudT::Ptr cloud_concatenated(new PointCloudT);
 
   // transform points
@@ -91,12 +102,22 @@ void Pointcloud2Merge::pointcloud_callback(const PointCloudMsgT::ConstPtr &msg1,
   {
     for (size_t i = 0; i < input_topics_size_; ++i)
     {
-      // Note: If you use kinetic, you can directly receive messages as
-      // PointCloutT.
-      cloud_sources[i] = PointCloudT().makeShared();
-      pcl::fromROSMsg(*msgs[i], *cloud_sources[i]);
+      pcl::PCLPointCloud2Ptr cloud1(new pcl::PCLPointCloud2);
+      PointCloudT::Ptr cloud2(new PointCloudT);
+
+      pcl_conversions::toPCL(*msgs[i], *cloud1);
+
+      pcl::VoxelGrid<pcl::PCLPointCloud2> filter;
+      filter.setInputCloud (cloud1);
+      filter.setLeafSize (resolution_, resolution_, resolution_);
+      filter.filter (*cloud1);
+
+      pcl::fromPCLPointCloud2(*cloud1, *cloud2);
+
       tf_listener_.waitForTransform(output_frame_id_, msgs[i]->header.frame_id, ros::Time(0), ros::Duration(1.0));
-      pcl_ros::transformPointCloud(output_frame_id_, ros::Time(0), *cloud_sources[i], msgs[i]->header.frame_id, *cloud_sources[i], tf_listener_);
+      pcl_ros::transformPointCloud(output_frame_id_, ros::Time(0), *cloud2, msgs[i]->header.frame_id, *cloud2, tf_listener_);
+
+      *cloud_concatenated += *cloud2;
     }
   }
   catch (tf::TransformException &ex)
@@ -105,16 +126,19 @@ void Pointcloud2Merge::pointcloud_callback(const PointCloudMsgT::ConstPtr &msg1,
     return;
   }
 
-  // merge points
-  for (size_t i = 0; i < input_topics_size_; ++i)
-  {
-    *cloud_concatenated += *cloud_sources[i];
-  }
+  // Downsample to reduce points
+  pcl::VoxelGrid<PointT> filter;
+  filter.setInputCloud (cloud_concatenated);
+  filter.setLeafSize (resolution_, resolution_, resolution_);
+  filter.filter (*cloud_concatenated);
 
   // publsh points
   cloud_concatenated->header = pcl_conversions::toPCL(msgs[0]->header);
   cloud_concatenated->header.frame_id = output_frame_id_;
   cloud_publisher_.publish(cloud_concatenated);
+
+  ROS_DEBUG("Processed PointCloud in %lf ms", (ros::WallTime::now() - start2).toSec() * 1000.0);
+  ROS_DEBUG("________________________________________________");
 }
 
 int main(int argc, char **argv)
