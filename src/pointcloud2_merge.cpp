@@ -18,6 +18,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/voxel_grid.h>
 
+// #include <omp.h>
 
 class Pointcloud2Merge
 {
@@ -28,13 +29,13 @@ private:
   typedef pcl::PointXYZ PointT;
   typedef pcl::PointCloud<PointT> PointCloudT;
   typedef sensor_msgs::PointCloud2 PointCloudMsgT;
-  typedef message_filters::sync_policies::ApproximateTime<PointCloudMsgT, PointCloudMsgT, PointCloudMsgT,
-                                                          PointCloudMsgT, PointCloudMsgT, PointCloudMsgT,
-                                                          PointCloudMsgT, PointCloudMsgT>
+  typedef message_filters::sync_policies::ApproximateTime<PointCloudT, PointCloudT, PointCloudT,
+                                                          PointCloudT, PointCloudT, PointCloudT,
+                                                          PointCloudT, PointCloudT>
       SyncPolicyT;
 
   ros::NodeHandle node_handle_, private_node_handle_;
-  message_filters::Subscriber<PointCloudMsgT> *cloud_subscribers_[8];
+  message_filters::Subscriber<PointCloudT> *cloud_subscribers_[8];
   message_filters::Synchronizer<SyncPolicyT> *cloud_synchronizer_;
   ros::Subscriber config_subscriber_;
   ros::Publisher cloud_publisher_;
@@ -45,10 +46,10 @@ private:
   std::string output_frame_id_;
   double resolution_;
 
-  void pointcloud_callback(const PointCloudMsgT::ConstPtr &msg1, const PointCloudMsgT::ConstPtr &msg2,
-                           const PointCloudMsgT::ConstPtr &msg3, const PointCloudMsgT::ConstPtr &msg4,
-                           const PointCloudMsgT::ConstPtr &msg5, const PointCloudMsgT::ConstPtr &msg6,
-                           const PointCloudMsgT::ConstPtr &msg7, const PointCloudMsgT::ConstPtr &msg8);
+  void pointcloud_callback(const PointCloudT::ConstPtr msg1, const PointCloudT::ConstPtr msg2,
+                           const PointCloudT::ConstPtr msg3, const PointCloudT::ConstPtr msg4,
+                           const PointCloudT::ConstPtr msg5, const PointCloudT::ConstPtr msg6,
+                           const PointCloudT::ConstPtr msg7, const PointCloudT::ConstPtr msg8);
 };
 
 Pointcloud2Merge::Pointcloud2Merge() : node_handle_(), private_node_handle_("~"), tf_listener_()
@@ -69,12 +70,12 @@ Pointcloud2Merge::Pointcloud2Merge() : node_handle_(), private_node_handle_("~")
     if (i < input_topics_size_)
     {
       cloud_subscribers_[i] =
-          new message_filters::Subscriber<PointCloudMsgT>(node_handle_, topics[i].as<std::string>(), 1);
+          new message_filters::Subscriber<PointCloudT>(node_handle_, topics[i].as<std::string>(), 1);
     }
     else
     {
       cloud_subscribers_[i] =
-          new message_filters::Subscriber<PointCloudMsgT>(node_handle_, topics[0].as<std::string>(), 1);
+          new message_filters::Subscriber<PointCloudT>(node_handle_, topics[0].as<std::string>(), 1);
     }
   }
   cloud_synchronizer_ = new message_filters::Synchronizer<SyncPolicyT>(
@@ -85,45 +86,46 @@ Pointcloud2Merge::Pointcloud2Merge() : node_handle_(), private_node_handle_("~")
   cloud_publisher_ = node_handle_.advertise<PointCloudMsgT>("/points_concat", 1);
 }
 
-void Pointcloud2Merge::pointcloud_callback(const PointCloudMsgT::ConstPtr &msg1, const PointCloudMsgT::ConstPtr &msg2,
-                                             const PointCloudMsgT::ConstPtr &msg3, const PointCloudMsgT::ConstPtr &msg4,
-                                             const PointCloudMsgT::ConstPtr &msg5, const PointCloudMsgT::ConstPtr &msg6,
-                                             const PointCloudMsgT::ConstPtr &msg7, const PointCloudMsgT::ConstPtr &msg8)
+void Pointcloud2Merge::pointcloud_callback(  const PointCloudT::ConstPtr msg1, const PointCloudT::ConstPtr msg2,
+                                             const PointCloudT::ConstPtr msg3, const PointCloudT::ConstPtr msg4,
+                                             const PointCloudT::ConstPtr msg5, const PointCloudT::ConstPtr msg6,
+                                             const PointCloudT::ConstPtr msg7, const PointCloudT::ConstPtr msg8)
 {
   assert(2 <= input_topics_size_ && input_topics_size_ <= 8);
 
   ros::WallTime start2 = ros::WallTime::now();
 
-  PointCloudMsgT::ConstPtr msgs[8] = { msg1, msg2, msg3, msg4, msg5, msg6, msg7, msg8 };
+  PointCloudT::ConstPtr msgs[8] = { msg1, msg2, msg3, msg4, msg5, msg6, msg7, msg8 };
   PointCloudT::Ptr cloud_concatenated(new PointCloudT);
+  PointCloudT::Ptr cloud_sources[8];
 
   // transform points
   try
   {
-    for (size_t i = 0; i < input_topics_size_; ++i)
+    omp_set_num_threads(input_topics_size_);
+    #pragma omp parallel
     {
-      pcl::PCLPointCloud2Ptr cloud1(new pcl::PCLPointCloud2);
-      PointCloudT::Ptr cloud2(new PointCloudT);
+      int i = omp_get_thread_num();
+      cloud_sources[i] = PointCloudT().makeShared();
 
-      pcl_conversions::toPCL(*msgs[i], *cloud1);
-
-      pcl::VoxelGrid<pcl::PCLPointCloud2> filter;
-      filter.setInputCloud (cloud1);
+      pcl::VoxelGrid<PointT> filter;
+      filter.setInputCloud (msgs[i]);
       filter.setLeafSize (resolution_, resolution_, resolution_);
-      filter.filter (*cloud1);
-
-      pcl::fromPCLPointCloud2(*cloud1, *cloud2);
+      filter.filter (*cloud_sources[i]);
 
       tf_listener_.waitForTransform(output_frame_id_, msgs[i]->header.frame_id, ros::Time(0), ros::Duration(1.0));
-      pcl_ros::transformPointCloud(output_frame_id_, ros::Time(0), *cloud2, msgs[i]->header.frame_id, *cloud2, tf_listener_);
-
-      *cloud_concatenated += *cloud2;
+      pcl_ros::transformPointCloud(output_frame_id_, ros::Time(0), *cloud_sources[i], msgs[i]->header.frame_id, *cloud_sources[i], tf_listener_);
     }
   }
   catch (tf::TransformException &ex)
   {
     ROS_ERROR("%s", ex.what());
     return;
+  }
+
+  for (size_t i = 0; i < input_topics_size_; ++i)
+  {
+    *cloud_concatenated += *cloud_sources[i];
   }
 
   // Downsample to reduce points
@@ -133,7 +135,7 @@ void Pointcloud2Merge::pointcloud_callback(const PointCloudMsgT::ConstPtr &msg1,
   filter.filter (*cloud_concatenated);
 
   // publsh points
-  cloud_concatenated->header = pcl_conversions::toPCL(msgs[0]->header);
+  cloud_concatenated->header = msgs[0]->header;
   cloud_concatenated->header.frame_id = output_frame_id_;
   cloud_publisher_.publish(cloud_concatenated);
 
