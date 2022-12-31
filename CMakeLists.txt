@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(pointcloud2_merge)
 
-find_package(OpenMP REQUIRED)
-if(OPENMP_FOUND)
-  message(STATUS "OPENMP FOUND")
-  set(OpenMP_FLAGS ${OpenMP_CXX_FLAGS})  # or if you use C: ${OpenMP_C_FLAGS}
-  set(OpenMP_LIBS gomp)
+set(USE_OPENMP false)
+
+if(USE_OPENMP)
+  find_package(OpenMP REQUIRED)
+  if(OPENMP_FOUND)
+    message(STATUS "OPENMP FOUND")
+    set(OpenMP_FLAGS ${OpenMP_CXX_FLAGS})  # or if you use C: ${OpenMP_C_FLAGS}
+    set(OpenMP_LIBS gomp)
+  endif()
 endif()
 
 find_package(catkin REQUIRED COMPONENTS
@@ -25,9 +29,14 @@ catkin_package(
     CATKIN_DEPENDS
       roscpp
       message_filters
+)
+
+if(USE_OPENMP)
+  catkin_package(
     DEPENDS
       OpenMP
-)
+  )
+endif()
 
 find_package(PCL 1.7 REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -44,7 +53,10 @@ link_directories(${PCL_LIBRARY_DIRS})
 
 # Points Concat filter
 add_executable(pointcloud2_merge src/pointcloud2_merge.cpp)
-target_compile_options(pointcloud2_merge PRIVATE ${OpenMP_FLAGS})
+
+if(USE_OPENMP)
+  target_compile_options(pointcloud2_merge PRIVATE ${OpenMP_FLAGS})
+endif()
 
 add_dependencies(pointcloud2_merge ${catkin_EXPORTED_TARGETS})
 

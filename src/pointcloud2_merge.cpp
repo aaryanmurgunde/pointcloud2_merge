@@ -18,7 +18,9 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/voxel_grid.h>
 
-// #include <omp.h>
+#ifdef _OPENMP
+   #include <omp.h>
+#endif
 
 class Pointcloud2Merge
 {
@@ -102,20 +104,35 @@ void Pointcloud2Merge::pointcloud_callback(  const PointCloudT::ConstPtr msg1, c
   // transform points
   try
   {
-    omp_set_num_threads(input_topics_size_);
-    #pragma omp parallel
-    {
-      int i = omp_get_thread_num();
-      cloud_sources[i] = PointCloudT().makeShared();
+    #ifdef _OPENMP
+      omp_set_num_threads(input_topics_size_);
+      #pragma omp parallel
+      {
+        int i = omp_get_thread_num();
+        cloud_sources[i] = PointCloudT().makeShared();
 
-      pcl::VoxelGrid<PointT> filter;
-      filter.setInputCloud (msgs[i]);
-      filter.setLeafSize (resolution_, resolution_, resolution_);
-      filter.filter (*cloud_sources[i]);
+        pcl::VoxelGrid<PointT> filter;
+        filter.setInputCloud (msgs[i]);
+        filter.setLeafSize (resolution_, resolution_, resolution_);
+        filter.filter (*cloud_sources[i]);
 
-      tf_listener_.waitForTransform(output_frame_id_, msgs[i]->header.frame_id, ros::Time(0), ros::Duration(1.0));
-      pcl_ros::transformPointCloud(output_frame_id_, ros::Time(0), *cloud_sources[i], msgs[i]->header.frame_id, *cloud_sources[i], tf_listener_);
-    }
+        tf_listener_.waitForTransform(output_frame_id_, msgs[i]->header.frame_id, ros::Time(0), ros::Duration(1.0));
+        pcl_ros::transformPointCloud(output_frame_id_, ros::Time(0), *cloud_sources[i], msgs[i]->header.frame_id, *cloud_sources[i], tf_listener_);
+      }
+    #else
+      for (size_t i = 0; i < input_topics_size_; ++i)
+      {
+        cloud_sources[i] = PointCloudT().makeShared();
+
+        pcl::VoxelGrid<PointT> filter;
+        filter.setInputCloud (msgs[i]);
+        filter.setLeafSize (resolution_, resolution_, resolution_);
+        filter.filter (*cloud_sources[i]);
+
+        tf_listener_.waitForTransform(output_frame_id_, msgs[i]->header.frame_id, ros::Time(0), ros::Duration(1.0));
+        pcl_ros::transformPointCloud(output_frame_id_, ros::Time(0), *cloud_sources[i], msgs[i]->header.frame_id, *cloud_sources[i], tf_listener_);
+      }
+    #endif
   }
   catch (tf::TransformException &ex)
   {
